@@ -1,0 +1,71 @@
+{
+  "name": "@hyperwatch/iptoasn",
+  "version": "1.0.0",
+  "description": "The autonomous system of IP addresses, from iptoasn.com, shipped with the package",
+  "license": "Apache-2.0",
+  "author": "François Hodierne <francois@hodierne.net>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hyperwatch/iptoasn.git"
+  },
+  "main": "src/iptoasn.js",
+  "files": [
+    ".husky/install.mjs",
+    "data/iptoasn.tsv.br",
+    "src",
+    "types"
+  ],
+  "scripts": {
+    "depcheck": "depcheck",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "prepack": "node -e \"require('fs').statSync('data/iptoasn.tsv.br')\" && npm run types",
+    "prepare": "node .husky/install.mjs",
+    "prettier": "prettier \"**/*.@(js|json|md|ts|yml)\"",
+    "prettier:check": "npm run prettier -- --list-different",
+    "prettier:write": "npm run prettier -- --write",
+    "test": "mocha --recursive",
+    "test:types": "npm run types && tsc -p test/types",
+    "type:check": "tsc -p .",
+    "types": "node -e \"require('fs').rmSync('types', { recursive: true, force: true })\" && tsc -p tsconfig.types.json",
+    "update": "node scripts/update.js"
+  },
+  "types": "types/iptoasn.d.ts",
+  "dependencies": {
+    "ip-address": "^10.7.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "depcheck": "^1.4.7",
+    "eslint": "^10.12.0",
+    "eslint-plugin-import-x": "^4.17.1",
+    "eslint-plugin-n": "^18.4.1",
+    "globals": "^17.13.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
+    "mocha": "^12.0.3",
+    "prettier": "^3.9.9",
+    "prettier-package-json": "^2.8.0",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "allowScripts": {
+    "unrs-resolver": false
+  },
+  "depcheck": {
+    "ignores": [
+      "prettier-package-json"
+    ]
+  },
+  "lint-staged": {
+    "*.{js,json,md,ts,yml}": [
+      "prettier --write"
+    ],
+    "package.json": [
+      "prettier-package-json --write"
+    ]
+  }
+}

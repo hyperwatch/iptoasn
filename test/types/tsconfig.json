@@ -1,0 +1,16 @@
+{
+  // The published declarations as a TypeScript user gets them, strict and
+  // without skipLibCheck: `npm run test:types`
+  "compilerOptions": {
+    "noEmit": true,
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": false,
+    "paths": { "@hyperwatch/iptoasn": ["../../types/iptoasn.d.ts"] }
+  },
+  "files": ["index.ts"]
+}
