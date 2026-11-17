@@ -8,6 +8,10 @@
 // not too far from the current table's, and known addresses in their AS.
 // Otherwise the file is kept and the script exits with status 1.
 //
+// The table counts as changed when its ranges or AS names changed: not for
+// a new date of the same data upstream (the first line, the source, is left
+// out of the comparison).
+//
 // In GitHub Actions, it sets the step outputs `changed` (true or false) and
 // `source` (what the table was made from).
 const fs = require('fs');
@@ -45,6 +49,16 @@ function setOutputs(outputs) {
     );
   }
 }
+
+/**
+ * Whether two tables in the compact format have the same ranges and names,
+ * whatever their sources
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+const sameTable = (a, b) =>
+  a.slice(a.indexOf('\n')) === b.slice(b.indexOf('\n'));
 
 /** @param {Buffer} buffer */
 const gunzip = (buffer) =>
@@ -97,7 +111,7 @@ async function main() {
   let current = null;
   if (fs.existsSync(FILE)) {
     current = zlib.brotliDecompressSync(fs.readFileSync(FILE)).toString('utf8');
-    if (current !== encoded) {
+    if (!sameTable(current, encoded)) {
       const before = decode(current);
       const change = Math.abs(table.size - before.size) / before.size;
       if (change > MAX_CHANGE) {
@@ -113,9 +127,11 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  if (current === encoded) {
-    console.log(`Unchanged: ${summary(table)} (${table.source})`);
-    setOutputs({ changed: 'false', source: table.source });
+  if (current !== null && sameTable(current, encoded)) {
+    // The published table and its source stay
+    const kept = decode(current).source;
+    console.log(`Unchanged: ${summary(table)} (${kept}; now ${source})`);
+    setOutputs({ changed: 'false', source: kept });
     return;
   }
 
@@ -134,7 +150,11 @@ async function main() {
   );
 }
 
-main().catch((err) => {
-  console.error(err.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { sameTable };
