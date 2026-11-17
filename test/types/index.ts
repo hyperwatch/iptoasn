@@ -16,9 +16,21 @@ async function main(): Promise<void> {
   }
   const size: number = table.size;
   const source: string = table.source;
-  const parsed: iptoasn.AsnTable = iptoasn.parse('1.0.0.0\t1.0.0.255\t13335\tUS\tExample');
-  const encoded: string = iptoasn.encode('1.0.0.0\t1.0.0.255\t13335\tUS\tExample', 'test');
-  console.log(size, source, parsed.size, iptoasn.decode(encoded).size, iptoasn.ipv4Number('1.2.3.4'), iptoasn.DATA_FILE);
+  const parsed: iptoasn.AsnTable = iptoasn.parse(
+    '1.0.0.0\t1.0.0.255\t13335\tUS\tExample'
+  );
+  const encoded: string = iptoasn.encode(
+    '1.0.0.0\t1.0.0.255\t13335\tUS\tExample',
+    'test'
+  );
+  console.log(
+    size,
+    source,
+    parsed.size,
+    iptoasn.decode(encoded).size,
+    iptoasn.ipv4Number('1.2.3.4'),
+    iptoasn.DATA_FILE
+  );
   // @ts-expect-error lookup takes one address
   table.lookup();
 }

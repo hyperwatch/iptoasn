@@ -58,6 +58,9 @@
   "depcheck": {
     "ignores": [
       "prettier-package-json"
+    ],
+    "ignorePatterns": [
+      "test/types"
     ]
   },
   "lint-staged": {
