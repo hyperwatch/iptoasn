@@ -11,7 +11,7 @@
   "main": "src/iptoasn.js",
   "files": [
     ".husky/install.mjs",
-    "data/iptoasn.tsv.br",
+    "data/iptoasn.bin.br",
     "src",
     "types"
   ],
@@ -19,7 +19,7 @@
     "depcheck": "depcheck",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
-    "prepack": "node -e \"require('fs').statSync('data/iptoasn.tsv.br')\" && npm run types",
+    "prepack": "node -e \"require('fs').statSync('data/iptoasn.bin.br')\" && npm run types",
     "prepare": "node .husky/install.mjs",
     "prettier": "prettier \"**/*.@(js|json|md|ts|yml)\"",
     "prettier:check": "npm run prettier -- --list-different",

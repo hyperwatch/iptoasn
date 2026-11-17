@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   const parsed: iptoasn.AsnTable = iptoasn.parse(
     '1.0.0.0\t1.0.0.255\t13335\tUS\tExample'
   );
-  const encoded: string = iptoasn.encode(
+  const encoded: Buffer = iptoasn.encode(
     '1.0.0.0\t1.0.0.255\t13335\tUS\tExample',
     'test'
   );

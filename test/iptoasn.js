@@ -120,45 +120,53 @@ describe('iptoasn', () => {
 
     it('says what the table was made from', () => {
       assert.strictEqual(
-        encoded.split('\n')[0],
-        'hyperwatch-iptoasn 1\ttest 2026-11-17'
+        encoded.toString('utf8', 0, encoded.indexOf(10)),
+        'hyperwatch-iptoasn 2\ttest 2026-11-17'
       );
+      assert.strictEqual(decode(encoded).source, 'test 2026-11-17');
     });
 
     it('gives the same lookups as the source', () => {
-      const source = parse(TABLE);
       const table = decode(encoded);
-      for (const address of [
-        '1.0.0.0',
-        '1.0.0.255',
-        '1.0.1.1',
-        '8.8.8.8',
-        '8.8.9.0',
-        '203.0.113.100',
-        '203.0.113.200',
-        '2001:4860::',
-        '2001:4860:ffff:ffff:ffff:ffff:ffff:ffff',
-        '2001:4861::',
-        '2a03:2880:f0ff::1',
-        '::1',
-      ]) {
-        assert.deepStrictEqual(
-          table.lookup(address),
-          source.lookup(address),
-          address
-        );
+      for (const [address, number] of /** @type {const} */ ([
+        ['1.0.0.0', 13335],
+        ['1.0.0.255', 13335],
+        ['1.0.1.1', null],
+        ['8.8.8.8', 15169],
+        ['8.8.9.0', null],
+        ['203.0.113.100', 64500],
+        ['203.0.113.200', null],
+        ['2001:4860::', 15169],
+        ['2001:4860:ffff:ffff:ffff:ffff:ffff:ffff', 15169],
+        ['2001:4861::', null],
+        ['2a03:2880:f0ff::1', 32934],
+        ['::1', null],
+      ])) {
+        const found = table.lookup(address);
+        assert.strictEqual(found ? found.number : null, number, address);
       }
+      assert.deepStrictEqual(table.lookup('2a03:2880::1'), {
+        number: 32934,
+        organization: 'FACEBOOK - Facebook, Inc.',
+        country: 'US',
+      });
+    });
+
+    it('keeps names in UTF-8', () => {
+      const table = parse('1.0.0.0\t1.0.0.255\t64500\tFR\tRéseau Ünïcode 网络');
+      assert.strictEqual(
+        table.lookup('1.0.0.1').organization,
+        'Réseau Ünïcode 网络'
+      );
     });
 
     it('merges contiguous ranges of the same AS', () => {
-      const table = decode(
-        encode(
-          [
-            '10.0.0.0\t10.0.0.255\t64500\tUS\tExample',
-            '10.0.1.0\t10.0.1.255\t64500\tUS\tExample',
-            '10.0.3.0\t10.0.3.255\t64500\tUS\tExample',
-          ].join('\n')
-        )
+      const table = parse(
+        [
+          '10.0.0.0\t10.0.0.255\t64500\tUS\tExample',
+          '10.0.1.0\t10.0.1.255\t64500\tUS\tExample',
+          '10.0.3.0\t10.0.3.255\t64500\tUS\tExample',
+        ].join('\n')
       );
       assert.strictEqual(table.size, 2);
       assert.strictEqual(table.find('10.0.0.1'), table.find('10.0.1.200'));
@@ -166,12 +174,41 @@ describe('iptoasn', () => {
       assert.strictEqual(table.lookup('10.0.3.1').number, 64500);
     });
 
-    it('rejects anything else', () => {
-      assert.throws(() => decode('1.0.0.0\t1.0.0.255\t13335'), /not a/);
+    it('gives each AS one name, the first seen', () => {
+      const table = parse(
+        [
+          '10.0.0.0\t10.0.0.255\t64500\tUS\tFirst',
+          '10.0.2.0\t10.0.2.255\t64500\tUS\tSecond',
+        ].join('\n')
+      );
+      assert.strictEqual(table.lookup('10.0.2.1').organization, 'First');
     });
 
-    it('keeps what the table was made from', () => {
-      assert.strictEqual(decode(encoded).source, 'test 2026-11-17');
+    it('reads a buffer that is not aligned, by copying it', () => {
+      const shifted = Buffer.alloc(encoded.length + 1);
+      encoded.copy(shifted, 1);
+      const table = decode(shifted.subarray(1));
+      assert.strictEqual(table.lookup('8.8.8.8').number, 15169);
+      assert.strictEqual(table.lookup('2001:4860::1').number, 15169);
+    });
+
+    it('rejects anything else', () => {
+      assert.throws(
+        () => decode(Buffer.from('1.0.0.0\t1.0.0.255\t13335\n')),
+        /not a hyperwatch-iptoasn 2 table/
+      );
+      assert.throws(
+        () => decode(Buffer.from('hyperwatch-iptoasn 1\tsource\n# asns\n')),
+        /not a hyperwatch-iptoasn 2 table/
+      );
+      assert.throws(
+        () => decode(encoded.subarray(0, encoded.length - 1)),
+        /truncated/
+      );
+      assert.throws(
+        () => decode(encoded.subarray(0, encoded.indexOf(10) + 1)),
+        /truncated/
+      );
     });
   });
 

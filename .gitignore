@@ -2,5 +2,5 @@ node_modules
 package-lock.json
 /types
 # Built by npm run update, published with the package only
-data/iptoasn.tsv.br
+data/iptoasn.bin.br
 npm-view.log

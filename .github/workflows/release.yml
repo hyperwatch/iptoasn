@@ -45,9 +45,15 @@ jobs:
             dir=$(mktemp -d)
             npm pack "@hyperwatch/iptoasn@$version" --pack-destination "$dir" --silent > /dev/null
             tar -xzf "$dir"/*.tgz -C "$dir"
-            mkdir -p data
-            cp "$dir/package/data/iptoasn.tsv.br" data/
             echo "Latest release: $version"
+            # Releases up to 1.0.20261117 have a table in another format: nothing
+            # to compare with
+            if [ -f "$dir/package/data/iptoasn.bin.br" ]; then
+              mkdir -p data
+              cp "$dir/package/data/iptoasn.bin.br" data/
+            else
+              echo "Its table isn't in the current format"
+            fi
             echo "version=$version" >> "$GITHUB_OUTPUT"
           elif grep -q E404 npm-view.log; then
             echo "Never published"

@@ -2,7 +2,7 @@
 
 The autonomous system (AS) of IP addresses, IPv4 and IPv6, for Node.js: which network announces an address, e.g. `AS13335 CLOUDFLARENET - Cloudflare, Inc.`
 
-The table comes with the package: [iptoasn.com](https://iptoasn.com/)'s `ip2asn-combined`, in a compact format (2.8 MB). Nothing is downloaded at run time: update the package for a newer table.
+The table comes with the package: [iptoasn.com](https://iptoasn.com/)'s `ip2asn-combined`, ready to use (3.7 MB, brotli). Nothing is downloaded at run time: update the package for a newer table.
 
 It's what Hyperwatch's `asn` module uses.
 
@@ -32,13 +32,13 @@ table.source; // what the table was made from: 'https://iptoasn.com/data/ip2asn-
 
 - `country` is the country the AS is registered in, not where the address is, and is left out when unknown.
 - IPv4-mapped IPv6 addresses (`::ffff:1.1.1.1`) are looked up as IPv4.
-- Load the table once and keep it: it takes about 0.4 s and 22 MB.
+- Load the table once and keep it: it takes about 70 ms and 14 MB, outside the JavaScript heap. Nothing is parsed: the file holds the lookup arrays as they are in memory, and names are decoded when a range is looked up.
 
 To cache lookups, `find(address)` gives the index of the address's range (`-1` when none) and `range(index)` what is known of it: cache the first per address and the second per range, and every address of a range shares one value.
 
 Speed: about 0.2 µs per IPv4 lookup and 3 µs per IPv6 lookup (mostly parsing the address).
 
-Tables can also be built from an ip2asn TSV file (`parse(text)`), and written in or read from the compact format (`encode(text, source)`, `decode(text)`).
+Tables can also be built from an ip2asn TSV file (`parse(text)`), and written in or read from the format the package ships (`encode(text, source)` gives a `Buffer`, `decode(buffer)` a table on it). The format is described in `src/iptoasn.js`; it is little-endian, so it loads on little-endian platforms only (every platform Node.js runs on in practice).
 
 ## Data
 
