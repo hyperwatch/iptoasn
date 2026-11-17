@@ -24,26 +24,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.x
           registry-url: https://registry.npmjs.org
+          # No dependency cache in a publishing workflow (setup-node's advice)
+          package-manager-cache: false
       # Trusted publishing needs npm 11.5.1 or later
       - run: npm install -g npm@^11.5.1
       - run: npm install
 
-      # The table of the latest release, to compare with
+      # The table of the latest release, to compare with. Only a 404 means
+      # there is none: any other error fails the run, rather than releasing
+      # a table nothing was compared with
       - name: Latest release
         id: latest
         run: |
-          if version=$(npm view @hyperwatch/iptoasn version 2>/dev/null); then
+          if version=$(npm view @hyperwatch/iptoasn version 2> npm-view.log); then
             dir=$(mktemp -d)
             npm pack "@hyperwatch/iptoasn@$version" --pack-destination "$dir" --silent > /dev/null
             tar -xzf "$dir"/*.tgz -C "$dir"
             mkdir -p data
             cp "$dir/package/data/iptoasn.tsv.br" data/
+            echo "Latest release: $version"
             echo "version=$version" >> "$GITHUB_OUTPUT"
+          elif grep -q E404 npm-view.log; then
+            echo "Never published"
+          else
+            cat npm-view.log
+            exit 1
           fi
 
       # Fails, and keeps the table, when the new one looks wrong

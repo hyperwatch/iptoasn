@@ -28,13 +28,17 @@ function publishedVersions() {
   }
   try {
     const output = execFileSync('npm', ['view', name, 'versions', '--json'], {
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).toString();
     const versions = JSON.parse(output);
     return Array.isArray(versions) ? versions : [versions];
-  } catch {
-    // Never published
-    return [];
+  } catch (/** @type {any} */ err) {
+    // Never published. Any other error (the registry or the network down)
+    // is thrown: a version can't be chosen without the published ones
+    if (/E404/.test(`${err.stdout || ''}${err.stderr || ''}`)) {
+      return [];
+    }
+    throw err;
   }
 }
 
