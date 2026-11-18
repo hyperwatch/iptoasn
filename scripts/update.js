@@ -1,4 +1,4 @@
-// Refreshes the table the package ships (data/iptoasn.tsv.br) from
+// Refreshes the table the package ships (data/iptoasn.bin.br) from
 // iptoasn.com's ip2asn-combined table (public domain, PDDL 1.0):
 //
 //   npm run update
@@ -9,8 +9,8 @@
 // Otherwise the file is kept and the script exits with status 1.
 //
 // The table counts as changed when its ranges or AS names changed: not for
-// a new date of the same data upstream (the first line, the source, is left
-// out of the comparison).
+// a new date of the same data upstream (the header, with the source, is
+// left out of the comparison).
 //
 // In GitHub Actions, it sets the step outputs `changed` (true or false) and
 // `source` (what the table was made from).
@@ -51,14 +51,21 @@ function setOutputs(outputs) {
 }
 
 /**
- * Whether two tables in the compact format have the same ranges and names,
- * whatever their sources
- * @param {string} a
- * @param {string} b
+ * A table without its header, the source and the padding after it (see
+ * encode)
+ * @param {Buffer} table
+ */
+const body = (table) =>
+  table.subarray(Math.ceil((table.indexOf(10) + 1) / 8) * 8);
+
+/**
+ * Whether two encoded tables have the same ranges and names, whatever their
+ * sources
+ * @param {Buffer} a
+ * @param {Buffer} b
  * @returns {boolean}
  */
-const sameTable = (a, b) =>
-  a.slice(a.indexOf('\n')) === b.slice(b.indexOf('\n'));
+const sameTable = (a, b) => body(a).equals(body(b));
 
 /** @param {Buffer} buffer */
 const gunzip = (buffer) =>
@@ -90,7 +97,7 @@ async function download() {
 const summary = (table) =>
   `${table.size} ranges (${table.v4Ends.length} IPv4, ${
     table.size - table.v4Ends.length
-  } IPv6), ${table.labels.length} ASes`;
+  } IPv6), ${new Set(table.numbers).size} ASes`;
 
 async function main() {
   const { text, source } = await download();
@@ -107,10 +114,10 @@ async function main() {
       errors.push(`${address} in AS ${found ? found.number : 'none'}`);
     }
   }
-  /** @type {string | null} */
+  /** @type {Buffer | null} */
   let current = null;
   if (fs.existsSync(FILE)) {
-    current = zlib.brotliDecompressSync(fs.readFileSync(FILE)).toString('utf8');
+    current = zlib.brotliDecompressSync(fs.readFileSync(FILE));
     if (!sameTable(current, encoded)) {
       const before = decode(current);
       const change = Math.abs(table.size - before.size) / before.size;

@@ -13,11 +13,17 @@
  * IPv6 as two 64-bit halves. Ranges announced by no one (AS 0, "Not
  * routed") are left out, so their addresses get nothing.
  *
+ * The package ships these arrays as they are in memory (see encode): a
+ * table is one buffer, with the arrays as views on it and the names as
+ * UTF-8 bytes in it, nothing parsed at load and next to nothing on the
+ * JavaScript heap.
+ *
  * A lookup first finds the range of the address (`find`, a number), then
  * what is known of it (`range`): callers can cache the second per range, so
  * every address of a range shares one value.
  */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
 const zlib = require('zlib');
@@ -25,7 +31,7 @@ const zlib = require('zlib');
 const { Address4, Address6 } = require('ip-address');
 
 /** The table shipped with the package (scripts/update.js refreshes it) */
-const DATA_FILE = path.join(__dirname, '..', 'data', 'iptoasn.tsv.br');
+const DATA_FILE = path.join(__dirname, '..', 'data', 'iptoasn.bin.br');
 
 /**
  * An address as an Address4 or Address6, IPv4-mapped IPv6 addresses as
@@ -112,43 +118,133 @@ function ipv4Number(value) {
   return parts === 4 ? result : -1;
 }
 
+// The format of a table, the file the package ships once decompressed
+// (data/iptoasn.bin.br is brotli of it). Little-endian:
+//
+//   hyperwatch-iptoasn 2<TAB><what it was made from><LF>
+//   zero bytes up to a multiple of 8
+//   counts           Uint32 × 4: IPv4 ranges, IPv6 ranges, labels, label bytes
+//   v6Starts, v6Ends BigUint64 × 2 per IPv6 range (high, then low half)
+//   v4Starts, v4Ends Uint32 per IPv4 range
+//   numbers          Uint32 per range (IPv4, then IPv6): the AS number
+//   labelIndexes     Uint32 per range: its label
+//   labelOffsets     Uint32 per label, plus the end: where each label starts
+//   labels           UTF-8, `country<TAB>organization` each, deduplicated
+//
+// Ranges are sorted by start and don't overlap. Contiguous ranges of the
+// same AS are merged, and each AS has one country and organization: the
+// first ones seen. The arrays are aligned to their element size, so they
+// are views on the buffer, never copies.
+const FORMAT = 'hyperwatch-iptoasn 2';
+
+/** @param {number} n */
+const align8 = (n) => Math.ceil(n / 8) * 8;
+
+/**
+ * Where each part of a table starts, after the header
+ * @param {number} start
+ * @param {number} v4 IPv4 ranges
+ * @param {number} v6 IPv6 ranges
+ * @param {number} labels
+ */
+function layout(start, v4, v6, labels) {
+  let offset = start + 16;
+  /** @param {number} bytes */
+  const take = (bytes) => {
+    const at = offset;
+    offset += bytes;
+    return at;
+  };
+  return {
+    v6Starts: take(v6 * 16),
+    v6Ends: take(v6 * 16),
+    v4Starts: take(v4 * 4),
+    v4Ends: take(v4 * 4),
+    numbers: take((v4 + v6) * 4),
+    labelIndexes: take((v4 + v6) * 4),
+    labelOffsets: take((labels + 1) * 4),
+    labels: offset,
+  };
+}
+
+// Typed arrays use the platform's byte order
+function checkByteOrder() {
+  if (os.endianness() !== 'LE') {
+    throw new Error('iptoasn tables are little-endian: not this platform');
+  }
+}
+
+/**
+ * The buffer, or an aligned copy when its arrays can't be views on it
+ * @param {Buffer} buffer
+ * @returns {Buffer}
+ */
+function aligned(buffer) {
+  if (buffer.byteOffset % 8 === 0) {
+    return buffer;
+  }
+  // Buffer.alloc never takes from the pool: offset 0
+  const copy = Buffer.alloc(buffer.length);
+  buffer.copy(copy);
+  return copy;
+}
+
 class AsnTable {
   /**
-   * @param {Row[]} ipv4 Sorted by start, not overlapping
-   * @param {Row[]} ipv6 Sorted by start, not overlapping
-   * @param {string[]} labels `country\torganization`, deduplicated
+   * A table on a buffer in the format above (see decode)
+   * @param {Buffer} buffer
    */
-  constructor(ipv4, ipv6, labels) {
-    this.v4Starts = new Uint32Array(ipv4.length);
-    this.v4Ends = new Uint32Array(ipv4.length);
+  constructor(buffer) {
+    checkByteOrder();
+    const data = aligned(buffer);
+    const newline = data.indexOf(10);
+    if (
+      newline === -1 ||
+      data.toString('latin1', 0, FORMAT.length + 1) !== `${FORMAT}\t`
+    ) {
+      throw new Error(`not a ${FORMAT} table`);
+    }
+    const start = align8(newline + 1);
+    if (data.length < start + 16) {
+      throw new Error('truncated table');
+    }
+    const [v4, v6, labels, labelBytes] = new Uint32Array(
+      data.buffer,
+      data.byteOffset + start,
+      4
+    );
+    const at = layout(start, v4, v6, labels);
+    if (data.length !== at.labels + labelBytes) {
+      throw new Error('truncated table');
+    }
+    const { buffer: memory, byteOffset } = data;
+    this.v4Starts = new Uint32Array(memory, byteOffset + at.v4Starts, v4);
+    this.v4Ends = new Uint32Array(memory, byteOffset + at.v4Ends, v4);
     // Halves of IPv6 starts and ends: high at 2i, low at 2i + 1
-    this.v6Starts = new BigUint64Array(ipv6.length * 2);
-    this.v6Ends = new BigUint64Array(ipv6.length * 2);
+    this.v6Starts = new BigUint64Array(
+      memory,
+      byteOffset + at.v6Starts,
+      v6 * 2
+    );
+    this.v6Ends = new BigUint64Array(memory, byteOffset + at.v6Ends, v6 * 2);
     // Ranges are numbered IPv4 first, then IPv6
-    const count = ipv4.length + ipv6.length;
-    this.numbers = new Uint32Array(count);
-    this.labelIndexes = new Uint32Array(count);
-    this.labels = labels;
+    this.numbers = new Uint32Array(memory, byteOffset + at.numbers, v4 + v6);
+    this.labelIndexes = new Uint32Array(
+      memory,
+      byteOffset + at.labelIndexes,
+      v4 + v6
+    );
+    this.labelOffsets = new Uint32Array(
+      memory,
+      byteOffset + at.labelOffsets,
+      labels + 1
+    );
+    this.labelsStart = at.labels;
+    this.data = data;
     /** Number of ranges */
-    this.size = count;
+    this.size = v4 + v6;
     /** What the table was made from (a URL and a date), when known */
-    this.source = '';
-
-    ipv4.forEach((row, i) => {
-      this.v4Starts[i] = Number(row.start);
-      this.v4Ends[i] = Number(row.end);
-      this.numbers[i] = row.number;
-      this.labelIndexes[i] = row.label;
-    });
-    ipv6.forEach((row, i) => {
-      this.v6Starts[2 * i] = row.start >> 64n;
-      this.v6Starts[2 * i + 1] = row.start & MASK64;
-      this.v6Ends[2 * i] = row.end >> 64n;
-      this.v6Ends[2 * i + 1] = row.end & MASK64;
-      const j = ipv4.length + i;
-      this.numbers[j] = row.number;
-      this.labelIndexes[j] = row.label;
-    });
+    this.source = data.toString('utf8', FORMAT.length + 1, newline);
   }
 
   /**
@@ -237,8 +333,15 @@ class AsnTable {
    * @returns {AsnLookup}
    */
   range(index) {
-    const [country, organization] =
-      this.labels[this.labelIndexes[index]].split('\t');
+    // Decoded here, not at load: the names stay bytes until looked up
+    const label = this.labelIndexes[index];
+    const [country, organization] = this.data
+      .toString(
+        'utf8',
+        this.labelsStart + this.labelOffsets[label],
+        this.labelsStart + this.labelOffsets[label + 1]
+      )
+      .split('\t');
     /** @type {AsnLookup} */
     const result = { number: this.numbers[index], organization };
     if (country) {
@@ -352,161 +455,143 @@ function readRows(text) {
 }
 
 /**
+ * Contiguous ranges of the same AS as one range
+ * @param {Row[]} rows Sorted, apart
+ * @returns {Row[]}
+ */
+function merge(rows) {
+  /** @type {Row[]} */
+  const merged = [];
+  for (const row of rows) {
+    const last = merged[merged.length - 1];
+    if (last && last.number === row.number && row.start === last.end + 1n) {
+      last.end = row.end;
+    } else {
+      merged.push({ ...row });
+    }
+  }
+  return merged;
+}
+
+/**
+ * A table in the format the package ships (see the format above), from the
+ * text of an ip2asn TSV file (ip2asn-combined.tsv, ip2asn-v4.tsv or
+ * ip2asn-v6.tsv)
+ * @param {string} text
+ * @param {string} [source] What it was made from (a URL and a date)
+ * @returns {Buffer}
+ */
+function encode(text, source = '') {
+  checkByteOrder();
+  const rows = readRows(text);
+  const ipv4 = merge(rows.ipv4);
+  const ipv6 = merge(rows.ipv6);
+
+  // One label per AS, the first seen, and each label once (in AS order:
+  // the same data gives the same bytes)
+  /** @type {Map<number, string>} */
+  const labelOf = new Map();
+  for (const row of [...ipv4, ...ipv6]) {
+    if (!labelOf.has(row.number)) {
+      labelOf.set(row.number, rows.labels[row.label]);
+    }
+  }
+  /** @type {Map<string, number>} */
+  const labelIndex = new Map();
+  for (const number of [...labelOf.keys()].sort((a, b) => a - b)) {
+    const label = /** @type {string} */ (labelOf.get(number));
+    if (!labelIndex.has(label)) {
+      labelIndex.set(label, labelIndex.size);
+    }
+  }
+  const labels = [...labelIndex.keys()].map((label) => Buffer.from(label));
+  const labelBytes = labels.reduce((sum, label) => sum + label.length, 0);
+
+  const header = Buffer.from(
+    `${FORMAT}\t${source.replace(/\s+/g, ' ').trim()}\n`
+  );
+  const start = align8(header.length);
+  const at = layout(start, ipv4.length, ipv6.length, labels.length);
+  const data = Buffer.alloc(at.labels + labelBytes);
+  header.copy(data);
+  const memory = data.buffer;
+  new Uint32Array(memory, start, 4).set([
+    ipv4.length,
+    ipv6.length,
+    labels.length,
+    labelBytes,
+  ]);
+
+  const v4Starts = new Uint32Array(memory, at.v4Starts, ipv4.length);
+  const v4Ends = new Uint32Array(memory, at.v4Ends, ipv4.length);
+  const v6Starts = new BigUint64Array(memory, at.v6Starts, ipv6.length * 2);
+  const v6Ends = new BigUint64Array(memory, at.v6Ends, ipv6.length * 2);
+  const count = ipv4.length + ipv6.length;
+  const numbers = new Uint32Array(memory, at.numbers, count);
+  const labelIndexes = new Uint32Array(memory, at.labelIndexes, count);
+  /** @param {Row} row */
+  const labelOfRow = (row) =>
+    /** @type {number} */ (
+      labelIndex.get(/** @type {string} */ (labelOf.get(row.number)))
+    );
+  ipv4.forEach((row, i) => {
+    v4Starts[i] = Number(row.start);
+    v4Ends[i] = Number(row.end);
+    numbers[i] = row.number;
+    labelIndexes[i] = labelOfRow(row);
+  });
+  ipv6.forEach((row, i) => {
+    v6Starts[2 * i] = row.start >> 64n;
+    v6Starts[2 * i + 1] = row.start & MASK64;
+    v6Ends[2 * i] = row.end >> 64n;
+    v6Ends[2 * i + 1] = row.end & MASK64;
+    numbers[ipv4.length + i] = row.number;
+    labelIndexes[ipv4.length + i] = labelOfRow(row);
+  });
+
+  const labelOffsets = new Uint32Array(
+    memory,
+    at.labelOffsets,
+    labels.length + 1
+  );
+  let offset = 0;
+  labels.forEach((label, i) => {
+    labelOffsets[i] = offset;
+    label.copy(data, at.labels + offset);
+    offset += label.length;
+  });
+  labelOffsets[labels.length] = offset;
+  return data;
+}
+
+/**
+ * A table from a buffer in the format the package ships (see encode). The
+ * table's arrays are views on the buffer: don't change it.
+ * @param {Buffer} buffer
+ * @returns {AsnTable}
+ */
+function decode(buffer) {
+  return new AsnTable(buffer);
+}
+
+/**
  * Builds a table from the text of an ip2asn TSV file
  * @param {string} text
  * @returns {AsnTable}
  */
 function parse(text) {
-  const { ipv4, ipv6, labels } = readRows(text);
-  return new AsnTable(ipv4, ipv6, labels);
-}
-
-// The compact format of the table the package ships (data/iptoasn.tsv.br):
-//
-//   hyperwatch-iptoasn 1<TAB><what it was made from>
-//   # asns
-//   <AS number><TAB><country><TAB><organization>
-//   # ipv4
-//   <gap><TAB><size><TAB><AS number>
-//   # ipv6
-//   <gap><TAB><size><TAB><AS number>
-//
-// Numbers in base 36. A range starts `gap` addresses after the end of the
-// one before it (the first one after address -1) and holds `size + 1`
-// addresses. Contiguous ranges of the same AS are merged. Each AS has one
-// country and organization: the first ones seen.
-const FORMAT = 'hyperwatch-iptoasn 1';
-
-/**
- * The compact format of an ip2asn TSV file
- * @param {string} text
- * @param {string} [source] What it was made from (a URL and a date)
- * @returns {string}
- */
-function encode(text, source = '') {
-  const { ipv4, ipv6, labels } = readRows(text);
-  /** @type {Map<number, string>} */
-  const names = new Map();
-  for (const row of [...ipv4, ...ipv6]) {
-    if (!names.has(row.number)) {
-      names.set(row.number, labels[row.label]);
-    }
-  }
-  const lines = [`${FORMAT}\t${source.replace(/\s+/g, ' ')}`, '# asns'];
-  for (const number of [...names.keys()].sort((a, b) => a - b)) {
-    lines.push(`${number.toString(36)}\t${names.get(number)}`);
-  }
-  for (const [name, rows] of /** @type {const} */ ([
-    ['ipv4', ipv4],
-    ['ipv6', ipv6],
-  ])) {
-    lines.push(`# ${name}`);
-    /** @type {Row[]} */
-    const merged = [];
-    for (const row of rows) {
-      const last = merged[merged.length - 1];
-      if (last && last.number === row.number && row.start === last.end + 1n) {
-        last.end = row.end;
-      } else {
-        merged.push({ ...row });
-      }
-    }
-    let previous = -1n;
-    for (const row of merged) {
-      lines.push(
-        [
-          (row.start - previous - 1n).toString(36),
-          (row.end - row.start).toString(36),
-          row.number.toString(36),
-        ].join('\t')
-      );
-      previous = row.end;
-    }
-  }
-  return `${lines.join('\n')}\n`;
-}
-
-/**
- * A table from its compact format (see encode)
- * @param {string} text
- * @returns {AsnTable}
- */
-function decode(text) {
-  const lines = text.split('\n');
-  if (!lines[0].startsWith(FORMAT)) {
-    throw new Error('not a hyperwatch-iptoasn table');
-  }
-  /** @type {Map<number, number>} AS number → label */
-  const labelOf = new Map();
-  /** @type {string[]} */
-  const labels = [];
-  /** @type {Record<string, Row[]>} */
-  const rows = { ipv4: [], ipv6: [] };
-  let section = '';
-  let previous = -1n;
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) {
-      continue;
-    }
-    if (line.startsWith('# ')) {
-      section = line.slice(2);
-      previous = -1n;
-      continue;
-    }
-    const tab = line.indexOf('\t');
-    if (section === 'asns') {
-      labelOf.set(parseInt(line.slice(0, tab), 36), labels.length);
-      labels.push(line.slice(tab + 1));
-      continue;
-    }
-    const target = rows[section];
-    if (!target) {
-      continue;
-    }
-    const [gap, size, asn] = line.split('\t');
-    const number = parseInt(asn, 36);
-    const label = labelOf.get(number);
-    if (label === undefined) {
-      throw new Error(`AS ${number} has no name (line ${i + 1})`);
-    }
-    const start = previous + 1n + base36(gap);
-    const end = start + base36(size);
-    target.push({ start, end, number, label });
-    previous = end;
-  }
-  const table = new AsnTable(rows.ipv4, rows.ipv6, labels);
-  table.source = lines[0].slice(FORMAT.length).trim();
-  return table;
-}
-
-/**
- * A base-36 number as a BigInt (IPv6 gaps don't fit in a Number)
- * @param {string} value
- * @returns {bigint}
- */
-function base36(value) {
-  // Numbers up to 10 digits are exact as Numbers (36^10 < 2^53)
-  if (value.length <= 10) {
-    return BigInt(parseInt(value, 36));
-  }
-  let result = 0n;
-  for (const c of value) {
-    result = result * 36n + BigInt(parseInt(c, 36));
-  }
-  return result;
+  return decode(encode(text));
 }
 
 const brotliDecompress = promisify(zlib.brotliDecompress);
 
 /**
- * The table shipped with the package (about 0.4 s and 22 MB). Load it once
- * and keep it: every call builds a new one.
+ * The table shipped with the package (about 50 ms and 14 MB, outside the
+ * JavaScript heap). Load it once and keep it: every call builds a new one.
  * @returns {Promise<AsnTable>}
  */
 async function load() {
-  const compressed = await fs.promises.readFile(DATA_FILE);
-  return decode((await brotliDecompress(compressed)).toString('utf8'));
+  return decode(await brotliDecompress(await fs.promises.readFile(DATA_FILE)));
 }
 
 /**
@@ -514,9 +599,7 @@ async function load() {
  * @returns {AsnTable}
  */
 function loadSync() {
-  return decode(
-    zlib.brotliDecompressSync(fs.readFileSync(DATA_FILE)).toString('utf8')
-  );
+  return decode(zlib.brotliDecompressSync(fs.readFileSync(DATA_FILE)));
 }
 
 module.exports.AsnTable = AsnTable;
