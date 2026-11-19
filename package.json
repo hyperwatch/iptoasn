@@ -6,7 +6,7 @@
   "author": "François Hodierne <francois@hodierne.net>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hyperwatch/iptoasn.git"
+    "url": "git+https://github.com/hyperwatch/iptoasn.git"
   },
   "main": "src/iptoasn.js",
   "files": [

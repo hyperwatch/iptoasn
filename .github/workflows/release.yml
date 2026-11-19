@@ -103,8 +103,18 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           SOURCE: ${{ steps.update.outputs.source }}
+          SUMMARY: ${{ steps.update.outputs.summary }}
+          BEFORE: ${{ steps.update.outputs.before }}
           GH_TOKEN: ${{ github.token }}
         run: |
           git tag "v$VERSION"
           git push origin "v$VERSION"
-          gh release create "v$VERSION" --title "$VERSION" --notes "Table: $SOURCE"
+          {
+            echo "- **Table:** $SOURCE"
+            echo "- **Ranges:** $SUMMARY"
+            if [ -n "$BEFORE" ]; then
+              echo "- **Before:** $BEFORE"
+            fi
+            echo "- **npm:** https://www.npmjs.com/package/@hyperwatch/iptoasn/v/$VERSION"
+          } > release-notes.md
+          gh release create "v$VERSION" --title "$VERSION" --notes-file release-notes.md
