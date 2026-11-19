@@ -12,8 +12,10 @@
 // a new date of the same data upstream (the header, with the source, is
 // left out of the comparison).
 //
-// In GitHub Actions, it sets the step outputs `changed` (true or false) and
-// `source` (what the table was made from).
+// In GitHub Actions, it sets the step outputs `changed` (true or false),
+// `source` (what the table was made from), `summary` (its ranges and ASes)
+// and, when it changed, `before` (the same of the table it replaces), for
+// the release notes.
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -93,11 +95,14 @@ async function download() {
   };
 }
 
+/** @param {number} n */
+const count = (n) => n.toLocaleString('en-US');
+
 /** @param {import('../src/iptoasn').AsnTable} table */
 const summary = (table) =>
-  `${table.size} ranges (${table.v4Ends.length} IPv4, ${
+  `${count(table.size)} ranges (${count(table.v4Ends.length)} IPv4, ${count(
     table.size - table.v4Ends.length
-  } IPv6), ${new Set(table.numbers).size} ASes`;
+  )} IPv6), ${count(new Set(table.numbers).size)} ASes`;
 
 async function main() {
   const { text, source } = await download();
@@ -116,17 +121,20 @@ async function main() {
   }
   /** @type {Buffer | null} */
   let current = null;
+  // The table replaced, for the release notes
+  let replaced = '';
   if (fs.existsSync(FILE)) {
     current = zlib.brotliDecompressSync(fs.readFileSync(FILE));
     if (!sameTable(current, encoded)) {
       const before = decode(current);
+      replaced = `${summary(before)} (${before.source})`;
       const change = Math.abs(table.size - before.size) / before.size;
       if (change > MAX_CHANGE) {
         errors.push(
           `${table.size} ranges instead of ${before.size} (${Math.round(change * 100)}% change)`
         );
       }
-      console.log(`Before: ${summary(before)} (${before.source})`);
+      console.log(`Before: ${replaced}`);
     }
   }
   if (errors.length > 0) {
@@ -138,7 +146,7 @@ async function main() {
     // The published table and its source stay
     const kept = decode(current).source;
     console.log(`Unchanged: ${summary(table)} (${kept}; now ${source})`);
-    setOutputs({ changed: 'false', source: kept });
+    setOutputs({ changed: 'false', source: kept, summary: summary(table) });
     return;
   }
 
@@ -151,7 +159,12 @@ async function main() {
   });
   fs.mkdirSync(path.dirname(FILE), { recursive: true });
   fs.writeFileSync(FILE, compressed);
-  setOutputs({ changed: 'true', source });
+  setOutputs({
+    changed: 'true',
+    source,
+    summary: summary(table),
+    ...(replaced ? { before: replaced } : {}),
+  });
   console.log(
     `After: ${summary(table)}, ${(compressed.length / 1e6).toFixed(1)} MB (${source})`
   );

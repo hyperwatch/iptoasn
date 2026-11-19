@@ -50,7 +50,7 @@ Versions are `MAJOR.MINOR.YYYYMMDD`: the patch is the day of the release (UTC), 
 
 ## Releases
 
-The [Release workflow](.github/workflows/release.yml) runs every day: it builds the table from iptoasn.com's latest file and publishes a release when the table differs from the latest release's, or when `MAJOR.MINOR` in `package.json` changed. At most one release per day and `MAJOR.MINOR`. Each release is tagged on the code it was built from, with a GitHub release giving the table's source.
+The [Release workflow](.github/workflows/release.yml) runs every day: it builds the table from iptoasn.com's latest file and publishes a release when the table differs from the latest release's, or when `MAJOR.MINOR` in `package.json` changed. At most one release per day and `MAJOR.MINOR`. Each release is tagged on the code it was built from, with a GitHub release giving the table's source, its ranges and ASes (and those of the table it replaces), and a link to the npm version.
 
 The new table is checked first: enough ranges, at most 10% more or fewer than in the latest release, and well-known addresses in their AS (Cloudflare, Google). Otherwise nothing is published and the run fails: look at the change before releasing it by hand.
 
